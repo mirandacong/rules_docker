@@ -50,7 +50,6 @@ container_import(
 """)
 
     args = [
-        python(repository_ctx),
         repository_ctx.path(repository_ctx.attr._puller),
         "--directory",
         repository_ctx.path("image"),
@@ -92,7 +91,7 @@ container_pull = repository_rule(
         "tag": attr.string(default = "latest"),
         "_puller": attr.label(
             executable = True,
-            default = Label("@puller//file:downloaded"),
+            default = Label("@dr_util//:puller"),
             cfg = "host",
         ),
     },
