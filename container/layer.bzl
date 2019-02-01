@@ -13,6 +13,7 @@
 # limitations under the License.
 """Rule for building a Container layer."""
 
+load("@bazel_skylib//lib:dicts.bzl", "dicts")
 load(
     "//skylib:filetype.bzl",
     container_filetype = "container",
@@ -77,6 +78,7 @@ def build_layer(
         tars = None,
         operating_system = None):
     """Build the current layer for appending it to the base layer"""
+    toolchain_info = ctx.toolchains["@io_bazel_rules_docker//toolchains/docker:toolchain_type"].info
     layer = output_layer
     build_layer_exec = ctx.executable.build_layer
     args = [
@@ -85,32 +87,38 @@ def build_layer(
         "--mode=" + ctx.attr.mode,
     ]
 
+    if toolchain_info.xz_path != "":
+        args += ["--xz_path=%s" % toolchain_info.xz_path]
+
     # Windows layer.tar require two separate root directories instead of just 1
     # 'Files' is the equivalent of '.' in Linux images.
     # 'Hives' is unique to Windows Docker images.  It is where per layer registry
     # changes are stored.  rules_docker doesn't support registry deltas, but the
     # directory is required for compatibility on Windows.
+    empty_root_dirs = []
     if (operating_system == "windows"):
         args += ["--root_directory=Files"]
         empty_root_dirs = ["Files", "Hives"]
-        args += ["--empty_root_dir=%s" % f for f in empty_root_dirs or []]
 
-    args += ["--file=%s=%s" % (f.path, _magic_path(ctx, f, layer)) for f in files]
-    args += ["--file=%s=%s" % (f.path, path) for (path, f) in file_map.items()]
-    args += ["--empty_file=%s" % f for f in empty_files or []]
-    args += ["--empty_dir=%s" % f for f in empty_dirs or []]
-    args += ["--tar=" + f.path for f in tars]
-    args += ["--deb=" + f.path for f in debs]
-    for k in symlinks:
-        if ":" in k:
-            fail("The source of a symlink cannot container ':', got: %s" % k)
-    args += ["--link=%s:%s" % (k, symlinks[k]) for k in symlinks]
-    arg_file = ctx.new_file(name + "-layer.args")
-    ctx.file_action(arg_file, "\n".join(args))
-    ctx.action(
+    all_files = [struct(src = f.path, dst = _magic_path(ctx, f, layer)) for f in files]
+    all_files += [struct(src = f.path, dst = path) for (path, f) in file_map.items()]
+    manifest = struct(
+        files = all_files,
+        symlinks = [struct(linkname = k, target = symlinks[k]) for k in symlinks],
+        empty_files = empty_files or [],
+        empty_dirs = empty_dirs or [],
+        empty_root_dirs = empty_root_dirs,
+        tars = [f.path for f in tars],
+        debs = [f.path for f in debs],
+    )
+    manifest_file = ctx.actions.declare_file(name + "-layer.manifest")
+    ctx.actions.write(manifest_file, manifest.to_json())
+    args += ["--manifest=" + manifest_file.path]
+
+    ctx.actions.run(
         executable = build_layer_exec,
-        arguments = ["--flagfile=" + arg_file.path],
-        inputs = files + file_map.values() + tars + debs + [arg_file],
+        arguments = args,
+        tools = files + file_map.values() + tars + debs + [manifest_file],
         outputs = [layer],
         use_default_shell_env = True,
         mnemonic = "ImageLayer",
@@ -197,7 +205,7 @@ def _impl(
         env = env or ctx.attr.env,
     )]
 
-_layer_attrs = dict({
+_layer_attrs = dicts.add({
     "data_path": attr.string(),
     "directory": attr.string(default = "/"),
     "files": attr.label_list(allow_files = True),
@@ -219,7 +227,7 @@ _layer_attrs = dict({
         executable = True,
         allow_files = True,
     ),
-}.items() + _hash_tools.items() + _layer_tools.items() + _zip_tools.items())
+}, _hash_tools, _layer_tools, _zip_tools)
 
 _layer_outputs = {
     "layer": "%{name}-layer.tar",
@@ -229,6 +237,7 @@ layer = struct(
     attrs = _layer_attrs,
     outputs = _layer_outputs,
     implementation = _impl,
+    toolchains = ["@io_bazel_rules_docker//toolchains/docker:toolchain_type"],
 )
 
 container_layer_ = rule(
@@ -236,6 +245,7 @@ container_layer_ = rule(
     executable = False,
     outputs = _layer_outputs,
     implementation = _impl,
+    toolchains = ["@io_bazel_rules_docker//toolchains/docker:toolchain_type"],
 )
 
 def container_layer(**kwargs):

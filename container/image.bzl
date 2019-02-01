@@ -39,6 +39,7 @@ expectation in such cases is that users will write something like:
 
 """
 
+load("@bazel_skylib//lib:dicts.bzl", "dicts")
 load(
     "//skylib:filetype.bzl",
     container_filetype = "container",
@@ -67,8 +68,11 @@ load(
     _layer_tools = "tools",
 )
 load(
-    "//container:layer.bzl",
+    "//container:providers.bzl",
     "LayerInfo",
+)
+load(
+    "//container:layer.bzl",
     _layer = "layer",
 )
 load(
@@ -108,8 +112,8 @@ def _image_config(
         null_entrypoint = False,
         null_cmd = False):
     """Create the configuration for a new container image."""
-    config = ctx.new_file(name + "." + layer_name + ".config")
-    manifest = ctx.new_file(name + "." + layer_name + ".manifest")
+    config = ctx.actions.declare_file(name + "." + layer_name + ".config")
+    manifest = ctx.actions.declare_file(name + "." + layer_name + ".manifest")
 
     label_file_dict = _string_to_label(
         ctx.files.label_files,
@@ -183,7 +187,15 @@ def _image_config(
         args += ["--stamp-info-file=%s" % f.path for f in stamp_inputs]
         inputs += stamp_inputs
 
-    ctx.action(
+    if ctx.attr.launcher_args and not ctx.attr.launcher:
+        fail("launcher_args does nothing when launcher is not specified.", attr = "launcher_args")
+    if ctx.attr.launcher:
+        args += [
+            "--entrypoint_prefix=%s" % x
+            for x in ["/" + ctx.file.launcher.basename] + ctx.attr.launcher_args
+        ]
+
+    ctx.actions.run(
         executable = ctx.executable.create_image_config,
         arguments = args,
         inputs = inputs,
@@ -218,8 +230,8 @@ def _assemble_image_digest(ctx, name, image, image_tarball, output_digest):
 
     ctx.actions.run(
         outputs = [output_digest],
-        inputs = [image["config"]] + blobsums + blobs +
-                 ([image["legacy"]] if image.get("legacy") else []),
+        tools = [image["config"]] + blobsums + blobs +
+                ([image["legacy"]] if image.get("legacy") else []),
         executable = ctx.executable._digester,
         arguments = arguments,
         mnemonic = "ImageDigest",
@@ -298,6 +310,11 @@ def _impl(
     if ctx.attr.base and ImageInfo in ctx.attr.base:
         legacy_run_behavior = ctx.attr.base[ImageInfo].legacy_run_behavior
         docker_run_flags = ctx.attr.base[ImageInfo].docker_run_flags
+
+    if ctx.attr.launcher:
+        if not file_map:
+            file_map = {}
+        file_map["/" + ctx.file.launcher.basename] = ctx.file.launcher
 
     # composite a layer from the container_image rule attrs,
     image_layer = _layer.implementation(
@@ -432,7 +449,7 @@ def _impl(
         ],
     )
 
-_attrs = dict(_layer.attrs.items() + {
+_attrs = dicts.add(_layer.attrs, {
     "base": attr.label(allow_files = container_filetype),
     "legacy_repository_naming": attr.bool(default = False),
     # TODO(mattmoor): Default this to False.
@@ -454,6 +471,8 @@ _attrs = dict(_layer.attrs.items() + {
     "layers": attr.label_list(providers = [LayerInfo]),
     "repository": attr.string(default = "bazel"),
     "stamp": attr.bool(default = False),
+    "launcher": attr.label(allow_single_file = True),
+    "launcher_args": attr.string_list(default = []),
     # Implicit/Undocumented dependencies.
     "label_files": attr.label_list(
         allow_files = True,
@@ -477,7 +496,7 @@ _attrs = dict(_layer.attrs.items() + {
         cfg = "host",
         executable = True,
     ),
-}.items() + _hash_tools.items() + _layer_tools.items() + _zip_tools.items())
+}, _hash_tools, _layer_tools, _zip_tools)
 
 _outputs = dict(_layer.outputs)
 

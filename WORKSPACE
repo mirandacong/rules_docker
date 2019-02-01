@@ -13,17 +13,31 @@
 # limitations under the License.
 workspace(name = "io_bazel_rules_docker")
 
+#load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+#load(
+    #"//toolchains/docker:toolchain.bzl",
+    #docker_toolchain_configure = "toolchain_configure",
+#)
+
+#docker_toolchain_configure(
+    #name = "docker_config",
+    #docker_path = "/usr/bin/docker",
+#)
+
+## Consumers shouldn't need to do this themselves once WORKSPACE is
+## instantiated recursively.
+#load(
+    #"//repositories:repositories.bzl",
+    #container_repositories = "repositories",
+#)
+
+#container_repositories()
+
 #load(
     #"//container:container.bzl",
     #"container_load",
     #"container_pull",
-    #container_repositories = "repositories",
 #)
-#load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-
-## Consumers shouldn't need to do this themselves once WORKSPACE is
-## instantiated recursively.
-#container_repositories()
 
 ## These are for testing.
 #container_pull(
@@ -41,6 +55,47 @@ workspace(name = "io_bazel_rules_docker")
 #container_load(
     #name = "pause_tar",
     #file = "//testdata:pause.tar",
+#)
+
+#container_pull(
+    #name = "alpine_linux_amd64",
+    #registry = "index.docker.io",
+    #repository = "library/alpine",
+    #tag = "3.8",
+#)
+
+#container_pull(
+    #name = "alpine_linux_armv6",
+    #architecture = "arm",
+    #cpu_variant = "v6",
+    #os = "linux",
+    #registry = "index.docker.io",
+    #repository = "library/alpine",
+    #tag = "3.8",
+#)
+
+#container_pull(
+    #name = "alpine_linux_ppc64le",
+    #architecture = "ppc64le",
+    #registry = "index.docker.io",
+    #repository = "library/alpine",
+    #tag = "3.8",
+#)
+
+#container_pull(
+    #name = "k8s_pause_amd64",
+    ## this is a manifest list, so the resolved digest should not match this digest
+    #digest = "sha256:f78411e19d84a252e53bff71a4407a5686c46983a2c2eeed83929b888179acea",
+    #registry = "k8s.gcr.io",
+    #repository = "pause",
+#)
+
+#container_pull(
+    #name = "k8s_pause_arm64",
+    #architecture = "arm64",
+    #registry = "k8s.gcr.io",
+    #repository = "pause",
+    #tag = "3.1",
 #)
 
 ## For testing, don't change the sha on these ones
@@ -68,9 +123,9 @@ workspace(name = "io_bazel_rules_docker")
 
 #http_archive(
     #name = "io_bazel_rules_python",
-    #sha256 = "8b32d2dbb0b0dca02e0410da81499eef8ff051dad167d6931a92579e3b2a1d48",
-    #strip_prefix = "rules_python-8b5d0683a7d878b28fffe464779c8a53659fc645",
-    #urls = ["https://github.com/bazelbuild/rules_python/archive/8b5d0683a7d878b28fffe464779c8a53659fc645.tar.gz"],
+    #sha256 = "da960ee6f0e2e08556d0e0c307896b0ea6ebc8d86f50c649ceda361b71df74a1",
+    #strip_prefix = "rules_python-f3a6a8d00a51a1f0e6d61bc7065c19fea2b3dd7a",
+    #urls = ["https://github.com/bazelbuild/rules_python/archive/f3a6a8d00a51a1f0e6d61bc7065c19fea2b3dd7a.tar.gz"],
 #)
 
 #load("@io_bazel_rules_python//python:pip.bzl", "pip_import", "pip_repositories")
@@ -109,19 +164,23 @@ workspace(name = "io_bazel_rules_docker")
 
 #_java_image_repos()
 
+#load("@bazel_tools//tools/build_defs/repo:jvm.bzl", "jvm_maven_import_external")
+
 ## For our java_image test.
-#maven_jar(
+#jvm_maven_import_external(
     #name = "com_google_guava_guava",
     #artifact = "com.google.guava:guava:18.0",
-    #sha1 = "cce0823396aa693798f8882e64213b1772032b09",
+    #artifact_sha256 = "d664fbfc03d2e5ce9cab2a44fb01f1d0bf9dfebeccc1a473b1f9ea31f79f6f99",
+    #licenses = ["notice"],  # Apache 2.0
+    #server_urls = ["http://central.maven.org/maven2"],
 #)
 
 ## For our scala_image test.
 #http_archive(
     #name = "io_bazel_rules_scala",
-    #sha256 = "50465838809fee66cab66fa20ed3d68c667f663958ede10fbe504a0d18481016",
-    #strip_prefix = "rules_scala-5874a2441596fe9a0bf80e167a4d7edd945c221e",
-    #urls = ["https://github.com/bazelbuild/rules_scala/archive/5874a2441596fe9a0bf80e167a4d7edd945c221e.tar.gz"],
+    #sha256 = "902e30b931ded41905641895b90c41727e01a732aba67dfda604b764c1e1e494",
+    #strip_prefix = "rules_scala-1354d935a74395b3f0870dd90a04e0376fe22587",
+    #urls = ["https://github.com/bazelbuild/rules_scala/archive/1354d935a74395b3f0870dd90a04e0376fe22587.tar.gz"],
 #)
 
 #load("@io_bazel_rules_scala//scala:scala.bzl", "scala_repositories")
@@ -135,9 +194,9 @@ workspace(name = "io_bazel_rules_docker")
 ## For our groovy_image test.
 #http_archive(
     #name = "io_bazel_rules_groovy",
-    #sha256 = "0d3f1f854d2d6fb79ef94bee6f6c23621fdc0032d72db11652a829bcb4777398",
-    #strip_prefix = "rules_groovy-ad6e2a1258a1f67e1a294b114d5dcbba36322a70",
-    #urls = ["https://github.com/bazelbuild/rules_groovy/archive/ad6e2a1258a1f67e1a294b114d5dcbba36322a70.tar.gz"],
+    #sha256 = "22669b0379e496555f574612043c6c3f1f6145c18d2697ddd308937d6d96f9ad",
+    #strip_prefix = "rules_groovy-cb174f4e7d6b9cbda06d4a0f538214f947747736",
+    #urls = ["https://github.com/bazelbuild/rules_groovy/archive/cb174f4e7d6b9cbda06d4a0f538214f947747736.tar.gz"],
 #)
 
 #load("@io_bazel_rules_groovy//groovy:groovy.bzl", "groovy_repositories")
@@ -147,8 +206,8 @@ workspace(name = "io_bazel_rules_docker")
 ## For our go_image test.
 #http_archive(
     #name = "io_bazel_rules_go",
-    #sha256 = "ee5fe78fe417c685ecb77a0a725dc9f6040ae5beb44a0ba4ddb55453aad23a8a",
-    #url = "https://github.com/bazelbuild/rules_go/releases/download/0.16.0/rules_go-0.16.0.tar.gz",
+    #sha256 = "62ec3496a00445889a843062de9930c228b770218c735eca89c67949cd967c3f",
+    #url = "https://github.com/bazelbuild/rules_go/releases/download/0.16.4/rules_go-0.16.4.tar.gz",
 #)
 
 #load("@io_bazel_rules_go//go:def.bzl", "go_register_toolchains", "go_rules_dependencies")
@@ -168,9 +227,9 @@ workspace(name = "io_bazel_rules_docker")
 ## For our rust_image test
 #http_archive(
     #name = "io_bazel_rules_rust",
-    #sha256 = "615639cfd5459fec4b8a5751112be808ab25ba647c4c1953d29bb554ef865da7",
-    #strip_prefix = "rules_rust-0.0.6",
-    #urls = ["https://github.com/bazelbuild/rules_rust/archive/0.0.6.tar.gz"],
+    #sha256 = "ed0c81084bcc2bdcc98cfe56f384b20856840825f5e413e2b71809b61809fc87",
+    #strip_prefix = "rules_rust-f32695dcd02d9a19e42b9eb7f29a24a8ceb2b858",
+    #urls = ["https://github.com/bazelbuild/rules_rust/archive/f32695dcd02d9a19e42b9eb7f29a24a8ceb2b858.tar.gz"],
 #)
 
 #load("@io_bazel_rules_rust//rust:repositories.bzl", "rust_repositories")
@@ -184,6 +243,19 @@ workspace(name = "io_bazel_rules_docker")
     #strip_prefix = "rules_d-0400b9b054013274cee2ed15679da19e1fc94e07",
     #urls = ["https://github.com/bazelbuild/rules_d/archive/0400b9b054013274cee2ed15679da19e1fc94e07.tar.gz"],
 #)
+## The following is required by rules_rust, remove once
+## https://github.com/bazelbuild/rules_rust/issues/167 is fixed
+#load("@io_bazel_rules_rust//:workspace.bzl", "bazel_version")
+
+#bazel_version(name = "bazel_version")
+
+## For our d_image test
+#http_archive(
+    #name = "io_bazel_rules_d",
+    #sha256 = "873022774f2f31ab57e7ff36b3f39c60fd4209952bfcc6902924b7942fa2973d",
+    #strip_prefix = "rules_d-2d38613073f3eb138aee0acbcb395ebada2f8ebf",
+    #urls = ["https://github.com/bazelbuild/rules_d/archive/2d38613073f3eb138aee0acbcb395ebada2f8ebf.tar.gz"],
+#)
 
 #load("@io_bazel_rules_d//d:d.bzl", "d_repositories")
 
@@ -191,9 +263,9 @@ workspace(name = "io_bazel_rules_docker")
 
 #http_archive(
     #name = "build_bazel_rules_nodejs",
-    #sha256 = "779edee08986ab40dbf8b1ad0260f3cc8050f1e96ccd2a88dc499848bbdb787f",
-    #strip_prefix = "rules_nodejs-0.11.1",
-    #urls = ["https://github.com/bazelbuild/rules_nodejs/archive/0.11.1.zip"],
+    #sha256 = "9b72bb0aea72d7cbcfc82a01b1e25bf3d85f791e790ddec16c65e2d906382ee0",
+    #strip_prefix = "rules_nodejs-0.16.2",
+    #urls = ["https://github.com/bazelbuild/rules_nodejs/archive/0.16.2.zip"],
 #)
 
 #load("@build_bazel_rules_nodejs//:defs.bzl", "node_repositories", "npm_install")
@@ -214,10 +286,10 @@ workspace(name = "io_bazel_rules_docker")
 
 #http_archive(
     #name = "bazel_toolchains",
-    #sha256 = "4ab012a06e80172b1d2cc68a69f12237ba2c4eb47ba34cb8099830d3b8c43dbc",
-    #strip_prefix = "bazel-toolchains-646207624ed58c9dc658a135e40e578f8bbabf64",
+    #sha256 = "07a81ee03f5feae354c9f98c884e8e886914856fb2b6a63cba4619ef10aaaf0b",
+    #strip_prefix = "bazel-toolchains-31b5dc8c4e9c7fd3f5f4d04c6714f2ce87b126c1",
     #urls = [
-        #"https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/646207624ed58c9dc658a135e40e578f8bbabf64.tar.gz",
-        #"https://github.com/bazelbuild/bazel-toolchains/archive/646207624ed58c9dc658a135e40e578f8bbabf64.tar.gz",
+        #"https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/31b5dc8c4e9c7fd3f5f4d04c6714f2ce87b126c1.tar.gz",
+        #"https://github.com/bazelbuild/bazel-toolchains/archive/31b5dc8c4e9c7fd3f5f4d04c6714f2ce87b126c1.tar.gz",
     #],
 #)

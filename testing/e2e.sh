@@ -108,10 +108,15 @@ local_repository(
 )
 
 load(
-  "@io_bazel_rules_docker//docker:docker.bzl",
-  "docker_repositories", "docker_pull"
+  "@io_bazel_rules_docker//repositories:repositories.bzl",
+  container_repositories = "repositories",
 )
-docker_repositories()
+container_repositories()
+
+load(
+  "@io_bazel_rules_docker//docker:docker.bzl",
+  "docker_pull",
+)
 
 docker_pull(
   name = "pause",
@@ -127,6 +132,7 @@ EOF
 
 function clear_docker() {
   docker rmi -f $(docker images -aq) || true
+  stop_containers
 }
 
 function test_bazel_build_then_run_docker_build_clean() {
@@ -198,7 +204,7 @@ function test_py_image() {
   cd "${ROOT}"
   clear_docker
   cat > output.txt <<EOF
-$(bazel run "$@" testdata:py_image)
+$(bazel run "$@" tests/docker/python:py_image)
 EOF
   EXPECT_CONTAINS "$(cat output.txt)" "First: 4"
   EXPECT_CONTAINS "$(cat output.txt)" "Second: 5"
@@ -235,7 +241,7 @@ EOF
 function test_cc_image() {
   cd "${ROOT}"
   clear_docker
-  EXPECT_CONTAINS "$(bazel run "$@" testdata:cc_image)" "Hello World"
+  EXPECT_CONTAINS "$(bazel run "$@" tests/docker/cc:cc_image)" "Hello World"
 }
 
 function test_cc_binary_as_image() {
@@ -250,26 +256,32 @@ function test_cc_image_wrapper() {
   EXPECT_CONTAINS "$(bazel run "$@" testdata:cc_image_wrapper)" "Hello World"
 }
 
+function test_launcher_image() {
+  cd "${ROOT}"
+  clear_docker
+  EXPECT_CONTAINS "$(bazel run "$@" testdata:launcher_image)" "Launched via launcher!"
+}
+
 function test_go_image() {
   cd "${ROOT}"
   clear_docker
-  EXPECT_CONTAINS "$(bazel run "$@" testdata:go_image)" "Hello, world!"
+  EXPECT_CONTAINS "$(bazel run "$@" tests/docker/go:go_image)" "Hello, world!"
 }
 
 function test_go_image_busybox() {
   cd "${ROOT}"
   clear_docker
-  bazel run -c dbg testdata:go_image -- --norun
+  bazel run -c dbg tests/docker/go:go_image -- --norun
   local number=$RANDOM
-  EXPECT_CONTAINS "$(docker run -ti --rm --entrypoint=sh bazel/testdata:go_image -c \"echo aa${number}bb\")" "aa${number}bb"
+  EXPECT_CONTAINS "$(docker run -ti --rm --entrypoint=sh bazel/tests/docker/go:go_image -c \"echo aa${number}bb\")" "aa${number}bb"
 }
 
 function test_go_image_with_tags() {
   cd "${ROOT}"
-  EXPECT_CONTAINS "$(bazel query //testdata:go_image)" "//testdata:go_image"
-  EXPECT_CONTAINS "$(bazel query 'attr(tags, tag1, //testdata:go_image)')" "//testdata:go_image"
-  EXPECT_CONTAINS "$(bazel query 'attr(tags, tag2, //testdata:go_image)')" "//testdata:go_image"
-  EXPECT_NOT_CONTAINS "$(bazel query 'attr(tags, other_tag, //testdata:go_image)')" "//testdata:go_image"
+  EXPECT_CONTAINS "$(bazel query //tests/docker/go:go_image)" "//tests/docker/go:go_image"
+  EXPECT_CONTAINS "$(bazel query 'attr(tags, tag1, //tests/docker/go:go_image)')" "//tests/docker/go:go_image"
+  EXPECT_CONTAINS "$(bazel query 'attr(tags, tag2, //tests/docker/go:go_image)')" "//tests/docker/go:go_image"
+  EXPECT_NOT_CONTAINS "$(bazel query 'attr(tags, other_tag, //tests/docker/go:go_image)')" "//tests/docker/go:go_image"
   echo yay
 }
 
@@ -298,11 +310,11 @@ function test_java_sandwich_image() {
   EXPECT_CONTAINS "$(bazel run "$@" testdata:java_sandwich_image)" "Hello World"
 }
 
-function test_java_bin_as_lib_image() {
+function test_java_simple_image() {
   cd "${ROOT}"
   clear_docker
-  bazel run testdata:java_bin_as_lib_image
-  docker run -ti --rm bazel/testdata:java_bin_as_lib_image
+  bazel run tests/docker/java:simple_java_image
+  docker run -ti --rm bazel/tests/docker/java:simple_java_image
 }
 
 function test_java_image_arg_echo() {
@@ -336,7 +348,7 @@ function test_war_image_with_custom_run_flags() {
 function test_scala_image() {
   cd "${ROOT}"
   clear_docker
-  EXPECT_CONTAINS "$(bazel run "$@" testdata:scala_image)" "Hello World"
+  EXPECT_CONTAINS "$(bazel run "$@" tests/docker/scala:scala_image)" "Hello World"
 }
 
 function test_scala_sandwich_image() {
@@ -348,7 +360,7 @@ function test_scala_sandwich_image() {
 function test_groovy_image() {
   cd "${ROOT}"
   clear_docker
-  EXPECT_CONTAINS "$(bazel run "$@" testdata:groovy_image)" "Hello World"
+  EXPECT_CONTAINS "$(bazel run "$@" tests/docker/groovy:groovy_image)" "Hello World"
 }
 
 function test_groovy_scala_image() {
@@ -360,7 +372,7 @@ function test_groovy_scala_image() {
 function test_rust_image() {
   cd "${ROOT}"
   clear_docker
-  EXPECT_CONTAINS "$(bazel run "$@" testdata:rust_image)" "Hello world"
+  EXPECT_CONTAINS "$(bazel run "$@" tests/docker/rust:rust_image)" "Hello world"
 }
 
 function test_d_image() {
@@ -372,9 +384,116 @@ function test_d_image() {
 function test_nodejs_image() {
   cd "${ROOT}"
   clear_docker
-  EXPECT_CONTAINS "$(bazel run "$@" testdata:nodejs_image)" "Hello World!"
+  EXPECT_CONTAINS "$(bazel run tests/docker/nodejs:nodejs_image)" "Hello World!"
 }
 
+function test_container_push() {
+  cd "${ROOT}"
+  clear_docker
+  cid=$(docker run --rm -d -p 5000:5000 --name registry registry:2)
+  bazel build tests/docker:push_test
+  # run here file_test targets to verify test outputs of push_test
+
+  docker stop -t 0 $cid
+}
+
+# Launch a private docker registry at localhost:5000 that requires a basic
+# htpasswd authentication with credentials at docker-config/htpasswd and needs
+# the docker client to be using the authentication from
+# docker-config/config.json.
+function launch_private_registry_with_auth() {
+  cd "${ROOT}"
+  config_dir="${ROOT}/testing/docker-config"
+  docker_run_opts=" --rm -d -p 5000:5000 --name registry"
+  # Mount the registry configuration
+  docker_run_opts+=" -v $config_dir/config.yml:/etc/docker/registry/config.yml"
+  # Mount the HTTP password file
+  docker_run_opts+=" -v $config_dir/htpasswd:/.htpasswd"
+  # Lauch the local registry that requires authentication
+  docker run $docker_run_opts registry:2
+
+  # Inject the location of the docker configuration directory into the bazel
+  # workspace which will be used to configure the authentication used by the
+  # docker toolchain in container_push.
+  config_dir="${ROOT}/testing/docker-config"
+  cat > ${ROOT}/testing/custom_toolchain_auth/def.bzl <<EOF
+client_config="${config_dir}"
+EOF
+}
+
+# Test container push where the local registry requires htpsswd authentication
+function test_container_push_with_auth() {
+  clear_docker
+  launch_private_registry_with_auth
+
+  # run here file_test targets to verify test outputs of push_test
+
+  # Run the container_push test in the Bazel workspace that configured
+  # the docker toolchain rule to use authentication.
+  cd "${ROOT}/testing/custom_toolchain_auth"
+  bazel_opts=" --override_repository=io_bazel_rules_docker=${ROOT}"
+  echo "Attempting authenticated container_push..."
+  EXPECT_CONTAINS "$(bazel run $bazel_opts @io_bazel_rules_docker//tests/docker:push_test)" "localhost:5000/docker/test:test was published"
+  bazel clean
+
+  # Run the container_push test in the Bazel workspace that uses the default
+  # configured docker toolchain. The default configuration doesn't setup
+  # authentication and this should fail.
+  cd "${ROOT}/testing/default_toolchain"
+  bazel_opts=" --override_repository=io_bazel_rules_docker=${ROOT}"
+  echo "Attempting unauthenticated container_push..."
+  EXPECT_CONTAINS "$(bazel run $bazel_opts @io_bazel_rules_docker//tests/docker:push_test  2>&1)" "Error publishing localhost:5000/docker/test:test"
+  bazel clean
+}
+
+function test_container_pull_with_auth() {
+  clear_docker
+  launch_private_registry_with_auth
+
+  cd "${ROOT}/testing/custom_toolchain_auth"
+  bazel_opts=" --override_repository=io_bazel_rules_docker=${ROOT}"
+  # Remove the old image if it exists
+  docker rmi bazel/image:image || true
+  # Push the locally built container to the private repo
+  bazel run $bazel_opts @io_bazel_rules_docker//tests/docker:push_test
+  echo "Attempting authenticated container pull and push..."
+  EXPECT_CONTAINS "$(bazel run $bazel_opts @local_pull//image)" "Loaded image"
+
+  # Run the container_pull test in the Bazel WORKSPACE that uses the default
+  # configured docker toolchain. The default configuration doesn't setup
+  # authentication and this should fail.
+  cd "${ROOT}/testing/default_toolchain"
+  bazel_opts=" --override_repository=io_bazel_rules_docker=${ROOT}"
+  echo "Attempting unauthenticated container_pull..."
+  EXPECT_CONTAINS "$(bazel run $bazel_opts @local_pull//image 2>&1)" "Error pulling and saving image localhost:5000/docker/test:test"
+}
+
+function test_container_push_with_stamp() {
+  cd "${ROOT}"
+  clear_docker
+  cid=$(docker run --rm -d -p 5000:5000 --name registry registry:2)
+  bazel run tests/docker:push_stamped_test
+  docker stop -t 0 $cid
+}
+
+function test_container_push_all() {
+  cd "${ROOT}"
+  clear_docker
+  cid=$(docker run --rm -d -p 5000:5000 --name registry registry:2)
+  # Use bundle push to push three images to the local registry.
+  bazel run tests/docker:test_docker_push_three_images_bundle
+  # Pull the three images we just pushed to ensure uploaded manifests
+  # are valid according to docker.
+  EXPECT_CONTAINS "$(docker pull localhost:5000/image0:latest)" "Downloaded newer image"
+  EXPECT_CONTAINS "$(docker pull localhost:5000/image1:latest)" "Downloaded newer image"
+  EXPECT_CONTAINS "$(docker pull localhost:5000/image2:latest)" "Downloaded newer image"
+  docker stop -t 0 $cid
+}
+
+test_container_push_with_stamp
+test_container_push_all
+test_container_push_with_auth
+test_container_pull_with_auth
 test_top_level
 test_bazel_build_then_run_docker_build_clean
 test_bazel_run_docker_build_clean
@@ -404,7 +523,7 @@ test_java_image_with_custom_run_flags -c opt
 test_java_image_with_custom_run_flags -c dbg
 test_java_sandwich_image -c opt
 test_java_sandwich_image -c dbg
-test_java_bin_as_lib_image
+test_java_simple_image
 test_java_image_arg_echo
 test_war_image
 test_war_image_with_custom_run_flags
@@ -423,3 +542,5 @@ test_rust_image -c dbg
 # test_d_image -c dbg
 test_nodejs_image -c opt
 test_nodejs_image -c dbg
+test_container_push
+test_launcher_image

@@ -22,12 +22,25 @@ load(
     "container_layer",
 )
 load("//testdata:utils.bzl", "generate_deb")
+load(":stamp_info.bzl", "stamp_info")
 
 exports_files(["pause.tar"])
 
 exports_files(["BUILD"])
 
-exports_files(["Runfiles.java"])
+exports_files([
+    "Binary.groovy",
+    "cc_image_library.cc",
+    "cc_image_library.h",
+    "Library.groovy",
+    "Library.java",
+    "Library.scala",
+    "main.go",
+    "main.rs",
+    "nodejs_image.js",
+    "py_image_library.py",
+    "Runfiles.java",
+])
 
 genrule(
     name = "gen",
@@ -377,7 +390,6 @@ docker_push(
     image = ":link_with_files_base",
     registry = "gcr.io",
     repository = "convoy-adapter/bazel-oci-test",
-    stamp = True,
     tag = "{BUILD_USER}",
 )
 
@@ -388,7 +400,6 @@ oci_push(
     image = ":link_with_files_base",
     registry = "gcr.io",
     repository = "convoy-adapter/bazel-oci-test",
-    stamp = True,
     tag = "{BUILD_USER}",
 )
 
@@ -431,7 +442,6 @@ container_bundle(
         # Pad username so that it is long enough.
         "example.com/aaaaa{BUILD_USER}:stamped": ":with_user",
     },
-    stamp = True,
 )
 
 # Generate a dummy debian package with a test/ directory
@@ -481,7 +491,6 @@ container_bundle(
         "eu.gcr.io/convoy-adapter/bazel-test/{BUILD_USER}:bar": ":with_double_env",
         "asia.gcr.io/convoy-adapter/bazel-test/{BUILD_USER}:baz": ":with_user",
     },
-    stamp = True,
 )
 
 docker_pushall(
@@ -628,11 +637,6 @@ container_image(
 
 load("//python:image.bzl", "py_image", "py_layer")
 
-py_library(
-    name = "py_image_library",
-    srcs = ["py_image_library.py"],
-)
-
 py_image(
     name = "py_image",
     srcs = ["py_image.py"],
@@ -643,7 +647,7 @@ py_image(
     ],
     data = [":BUILD"],
     layers = [
-        ":py_image_library",
+        "//tests/docker/python:py_image_library",
     ],
 )
 
@@ -651,7 +655,25 @@ py_image(
     name = "py_image_with_main",
     srcs = ["py_image.py"],
     layers = [
-        ":py_image_library",
+        "//tests/docker/python:py_image_library",
+    ],
+    main = "py_image.py",
+)
+
+load("//testdata:utils.bzl", "rule_with_symlinks")
+
+rule_with_symlinks(
+    name = "data_with_symlinks",
+)
+
+py_image(
+    name = "py_image_with_symlinks_in_data",
+    srcs = ["py_image.py"],
+    data = [
+        ":data_with_symlinks",
+    ],
+    layers = [
+        "//tests/docker/python:py_image_library",
     ],
     main = "py_image.py",
 )
@@ -706,24 +728,10 @@ py_image(
 load("//python3:image.bzl", "py3_image")
 
 py3_image(
-    name = "py3_image",
-    srcs = ["py3_image.py"],
-    args = [
-        "arg0",
-        "arg1",
-        "$(location :BUILD)",
-    ],
-    data = [":BUILD"],
-    layers = [
-        ":py_image_library",
-    ],
-)
-
-py3_image(
     name = "py3_image_with_main",
     srcs = ["py3_image.py"],
     layers = [
-        ":py_image_library",
+        "//tests/docker/python:py_image_library",
     ],
     main = "py3_image.py",
 )
@@ -743,36 +751,17 @@ py3_image(
     srcs = ["py3_image.py"],
     base = ":py3_image_base_with_custom_run_flags",
     layers = [
-        ":py_image_library",
+        "//tests/docker/python:py_image_library",
     ],
     main = "py3_image.py",
 )
 
 load("//cc:image.bzl", "cc_image")
 
-cc_library(
-    name = "cc_image_library",
-    srcs = ["cc_image_library.cc"],
-    hdrs = ["cc_image_library.h"],
-)
-
-cc_image(
-    name = "cc_image",
-    srcs = ["cc_image.cc"],
-    args = [
-        "arg0",
-        "arg1",
-        "$(location :BUILD)",
-    ],
-    data = [":BUILD"],
-    # This creates an empty layer, due to linking.
-    layers = [":cc_image_library"],
-)
-
 cc_binary(
     name = "cc_binary",
     srcs = ["cc_image.cc"],
-    deps = [":cc_image_library"],
+    deps = ["//tests/docker/cc:cc_image_library"],
 )
 
 cc_image(
@@ -784,8 +773,8 @@ cc_image(
 sh_binary(
     name = "cc_image_wrapper",
     srcs = ["cc_image_wrapper.sh"],
-    args = ["$(location :cc_image)"],
-    data = [":cc_image"],
+    args = ["$(location //tests/docker/cc:cc_image)"],
+    data = ["//tests/docker/cc:cc_image"],
 )
 
 load(
@@ -826,20 +815,8 @@ java_image(
 java_image(
     name = "java_sandwich_image",
     srcs = ["Binary.java"],
-    layers = [":scala_image_library"],
+    layers = ["//tests/docker/scala:scala_image_library"],
     main_class = "examples.images.Binary",
-)
-
-java_library(
-    name = "java_bin_as_lib",
-    srcs = ["Binary.java"],
-    deps = [":java_image_library"],
-)
-
-java_image(
-    name = "java_bin_as_lib_image",
-    main_class = "examples.images.Binary",
-    runtime_deps = [":java_bin_as_lib"],
 )
 
 # The following `container_image` and `java_image` combination shows how to set
@@ -856,7 +833,7 @@ java_image(
     name = "java_image_with_custom_run_flags",
     base = ":java_image_base_with_custom_run_flags",
     main_class = "examples.images.Binary",
-    runtime_deps = [":java_bin_as_lib"],
+    runtime_deps = ["//tests/docker/java:java_bin_as_lib"],
 )
 
 java_image(
@@ -895,28 +872,7 @@ war_image(
     ],
 )
 
-load("@io_bazel_rules_scala//scala:scala.bzl", "scala_library")
 load("//scala:image.bzl", "scala_image")
-
-scala_library(
-    name = "scala_image_library",
-    srcs = ["Library.scala"],
-    deps = ["@com_google_guava_guava//jar"],
-)
-
-scala_image(
-    name = "scala_image",
-    srcs = ["Binary.scala"],
-    args = [
-        "arg0",
-        "arg1",
-        "$(location :BUILD)",
-    ],
-    data = [":BUILD"],
-    jvm_flags = ["-Dbuild.location=$(location :BUILD)"],
-    layers = [":scala_image_library"],
-    main_class = "examples.images.Binary",
-)
 
 scala_image(
     name = "scala_sandwich_image",
@@ -925,66 +881,31 @@ scala_image(
     main_class = "examples.images.Binary",
 )
 
-load("@io_bazel_rules_groovy//groovy:groovy.bzl", "groovy_library")
 load("//groovy:image.bzl", "groovy_image")
-
-groovy_library(
-    name = "groovy_image_library",
-    srcs = ["Library.groovy"],
-    deps = ["@com_google_guava_guava//jar"],
-)
-
-groovy_image(
-    name = "groovy_image",
-    srcs = ["Binary.groovy"],
-    args = [
-        "arg0",
-        "arg1",
-        "$(location :BUILD)",
-    ],
-    data = [":BUILD"],
-    jvm_flags = ["-Dbuild.location=$(location :BUILD)"],
-    layers = [":groovy_image_library"],
-    main_class = "examples.images.Binary",
-)
 
 # This calls from Groovy -> Scala -> Java :)
 groovy_image(
     name = "groovy_scala_image",
     srcs = ["Binary.groovy"],
-    layers = [":scala_image_library"],
+    layers = ["//tests/docker/scala:scala_image_library"],
     main_class = "examples.images.Binary",
 )
 
-load("//go:image.bzl", "go_image")
+load("@io_bazel_rules_go//go:def.bzl", "go_binary")
 
-go_image(
-    name = "go_image",
-    srcs = ["main.go"],
-    args = [
-        "arg0",
-        "arg1",
-        "$(location :BUILD)",
-    ],
-    data = [":BUILD"],
-    importpath = "github.com/bazelbuild/rules_docker/docker/testdata",
-    tags = [
-        "tag1",
-        "tag2",
-    ],
+go_binary(
+    name = "launcher",
+    srcs = ["launcher_main.go"],
+    goarch = "amd64",
+    goos = "linux",
+    pure = "on",
 )
 
-load("//rust:image.bzl", "rust_image")
-
-rust_image(
-    name = "rust_image",
-    srcs = ["main.rs"],
-    args = [
-        "arg0",
-        "arg1",
-        "$(location :BUILD)",
-    ],
-    data = [":BUILD"],
+container_image(
+    name = "launcher_image",
+    base = "//tests/docker/go:go_image",
+    launcher = ":launcher",
+    launcher_args = ["-env=CUSTOM_MESSAGE=Launched via launcher!"],
 )
 
 load("//d:image.bzl", "d_image")
@@ -998,19 +919,6 @@ load("//d:image.bzl", "d_image")
 #        "arg1",
 #    ],
 #)
-
-load("//nodejs:image.bzl", "nodejs_image")
-
-nodejs_image(
-    name = "nodejs_image",
-    args = [
-        "arg0",
-        "arg1",
-    ],
-    data = [":nodejs_image.js"],
-    entry_point = "io_bazel_rules_docker/testdata/nodejs_image.js",
-    node_modules = "@npm_deps//:node_modules",
-)
 
 generate_deb(
     name = "pkg1",
@@ -1028,4 +936,13 @@ generate_deb(
 generate_deb(
     name = "pkg_control_xz",
     metadata_compression_type = "xz",
+)
+
+# Make the Bazel stamp file available in tests.
+stamp_info(name = "stamp_info_file")
+
+# Auto-generated by Go linter.
+go_binary(
+    name = "main",
+    srcs = ["main.go"],
 )

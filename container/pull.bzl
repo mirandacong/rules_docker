@@ -31,6 +31,31 @@ def python(repository_ctx):
     fail("rules_docker requires a python interpreter installed. " +
          "Please set BAZEL_PYTHON, or put it on your path.")
 
+_container_pull_attrs = {
+    "registry": attr.string(mandatory = True),
+    "repository": attr.string(mandatory = True),
+    "digest": attr.string(),
+    "tag": attr.string(default = "latest"),
+    "os": attr.string(default = "linux"),
+    "os_version": attr.string(),
+    "os_features": attr.string_list(),
+    "architecture": attr.string(default = "amd64"),
+    "cpu_variant": attr.string(),
+    "platform_features": attr.string_list(),
+    "docker_client_config": attr.string(
+        doc = "A custom directory for the docker client config.json. " +
+              "If DOCKER_CONFIG is not specified, the value of the " +
+              "DOCKER_CONFIG environment variable will be used. DOCKER_CONFIG" +
+              " is not defined, the home directory will be used.",
+        mandatory = False,
+    ),
+    "_puller": attr.label(
+        executable = True,
+        default = Label("@dr_util//:puller"),
+        cfg = "host",
+    ),
+}
+
 def _impl(repository_ctx):
     """Core implementation of container_pull."""
 
@@ -47,13 +72,31 @@ container_import(
   config = "config.json",
   layers = glob(["*.tar.gz"]),
 )
+
+exports_files(["digest"])
 """)
 
     args = [
         repository_ctx.path(repository_ctx.attr._puller),
         "--directory",
         repository_ctx.path("image"),
+        "--os",
+        repository_ctx.attr.os,
+        "--os-version",
+        repository_ctx.attr.os_version,
+        "--os-features",
+        " ".join(repository_ctx.attr.os_features),
+        "--architecture",
+        repository_ctx.attr.architecture,
+        "--variant",
+        repository_ctx.attr.cpu_variant,
+        "--features",
+        " ".join(repository_ctx.attr.platform_features),
     ]
+
+    # Use the custom docker client config directory if specified.
+    if repository_ctx.attr.docker_client_config != "":
+        args += ["--client-config-dir", "{}".format(repository_ctx.attr.docker_client_config)]
 
     # If a digest is specified, then pull by digest.  Otherwise, pull by tag.
     if repository_ctx.attr.digest:
@@ -83,20 +126,17 @@ container_import(
     if result.return_code:
         fail("Pull command failed: %s (%s)" % (result.stderr, " ".join(args)))
 
-container_pull = repository_rule(
-    attrs = {
-        "registry": attr.string(mandatory = True),
-        "repository": attr.string(mandatory = True),
-        "digest": attr.string(),
-        "tag": attr.string(default = "latest"),
-        "_puller": attr.label(
-            executable = True,
-            default = Label("@dr_util//:puller"),
-            cfg = "host",
-        ),
-    },
-    implementation = _impl,
-)
+    updated_attrs = {
+        k: getattr(repository_ctx.attr, k)
+        for k in _container_pull_attrs.keys()
+    }
+    updated_attrs["name"] = repository_ctx.name
+
+    digest_result = repository_ctx.execute(["cat", repository_ctx.path("image/digest")])
+    if digest_result.return_code:
+        fail("Failed to read digest: %s" % digest_result.stderr)
+    updated_attrs["digest"] = digest_result.stdout
+    return updated_attrs
 
 """Pulls a container image.
 
@@ -110,4 +150,26 @@ Args:
   tag: (optional) the tag of the image, default to 'latest' if this
        and 'digest' remain unspecified.
   digest: (optional) the digest of the image to pull.
+  os: (optional) which os to pull if this image refers to a
+      multi-platform manifest list, default 'linux'.
+  os_version: (optional) which os version to pull if this image refers to a
+              multi-platform manifest list.
+  os_features: (optional) specifies os features when pulling a
+               multi-platform manifest list.
+  architecture: (optional) which CPU architecture to pull if this image
+                refers to a multi-platform manifest list, default 'amd64'.
+  cpu_variant: (optional) which CPU variant to pull if this image
+                refers to a multi-platform manifest list.
+  platform_features: (optional) specifies platform features when pulling a
+                     multi-platform manifest list.
 """
+
+pull = struct(
+    attrs = _container_pull_attrs,
+    implementation = _impl,
+)
+
+container_pull = repository_rule(
+    attrs = _container_pull_attrs,
+    implementation = _impl,
+)

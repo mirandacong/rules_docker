@@ -77,6 +77,12 @@ https://github.com/googlecloudplatform/distroless) language runtimes, but these
 can be overridden via the `base="..."` attribute (e.g. with a `container_pull`
 or `container_image` target).
 
+Note also that these rules do not expose any docker related attributes. If you
+need to add a custom `env` or `symlink` to a `lang_image`, you must use
+`container_image` targets for this purpose. Specifically, you can use as base for your
+`lang_image` target a `container_image` target that adds e.g., custom `env` or `symlink`.
+Please see <a href=#go_image-custom-base>go_image (custom base)</a> for an example.
+
 ## Setup
 
 Add the following to your `WORKSPACE` file to add the external repositories:
@@ -84,30 +90,45 @@ Add the following to your `WORKSPACE` file to add the external repositories:
 ```python
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
+# Download the rules_docker repository at release v0.6.0
 http_archive(
     name = "io_bazel_rules_docker",
-    sha256 = "29d109605e0d6f9c892584f07275b8c9260803bf0c6fcb7de2623b2bedc910bd",
-    strip_prefix = "rules_docker-0.5.1",
-    urls = ["https://github.com/bazelbuild/rules_docker/archive/v0.5.1.tar.gz"],
+    # Replace with a real SHA256 checksum
+    sha256 = "{SHA256}"
+    strip_prefix = "rules_docker-{HEAD}",
+    urls = ["https://github.com/bazelbuild/rules_docker/archive/{HEAD}.tar.gz"],
 )
 
-# Call this to override the default docker toolchain configuration. This call
-# should be placed BEFORE the call to "container_repositories" below to actually 
-# override the default toolchain configuration
+# OPTIONAL: Call this to override the default docker toolchain configuration.
+# This call should be placed BEFORE the call to "container_repositories" below
+# to actually override the default toolchain configuration.
+# Note this is only required if you actually want to call
+# docker_toolchain_configure with a custom attr; please read the toolchains
+# docs in /toolchains/docker/ before blindly adding this to your WORKSPACE.
+
 load("@io_bazel_rules_docker//toolchains/docker:toolchain.bzl",
     docker_toolchain_configure="toolchain_configure"
 )
-docker_toolchain_configure(name = "docker_config")
-
-load(
-    "@io_bazel_rules_docker//container:container.bzl",
-    "container_pull",
-    container_repositories = "repositories",
+docker_toolchain_configure(
+  name = "docker_config",
+  # OPTIONAL: Path to a directory which has a custom docker client config.json.
+  # See https://docs.docker.com/engine/reference/commandline/cli/#configuration-files
+  # for more details.
+  client_config="/path/to/docker/client/config",
 )
 
 # This is NOT needed when going through the language lang_image
 # "repositories" function(s).
+load(
+    "@io_bazel_rules_docker//repositories:repositories.bzl",
+    container_repositories = "repositories",
+)
 container_repositories()
+
+load(
+    "@io_bazel_rules_docker//container:container.bzl",
+    "container_pull",
+)
 
 container_pull(
   name = "java_base",
@@ -117,6 +138,15 @@ container_pull(
   digest = "sha256:deadbeef",
 )
 ```
+
+Note: Bazel does not deal well with diamond dependencies. If the repositories that
+are imported by `container_repositories()` have already been imported (at a
+different version) by other rules you called in your `WORKSPACE`, which are
+placed above the call to `container_repositories()`, arbitrary errors might
+ocurr. If you get errors related to external repositories, you will likely
+not be able to use `container_repositories()` and will have to import
+directly in your `WORKSPACE` all the required dependencies (see the most up
+to date impl of `container_repositories()` for details).
 
 ## Using with Docker locally.
 
@@ -138,9 +168,9 @@ this behavior by passing the single flag: `bazel run :foo -- --norun`
 
 Alternatively, you can build a `docker load` compatible bundle with:
 `bazel build my/image:helloworld.tar`.  This will produce the file:
-`bazel-genfiles/my/image/helloworld.tar`, which you can load into
+`bazel-bin/my/image/helloworld.tar`, which you can load into
 your local Docker client by running:
-`docker load -i bazel-genfiles/my/image/helloworld.tar`.  Building
+`docker load -i bazel-bin/my/image/helloworld.tar`.  Building
 this target can be expensive for large images.
 
 These work with both `container_image`, `container_bundle`, and the
@@ -169,7 +199,8 @@ at present for doing this.
 
 ### Stamping
 
-The first option is to use `stamp = True`.
+The first option is to use stamping. Stamping is enabled when a supported
+attribute contains a python format placeholder (eg `{BUILD_USER}`).
 
 ```python
 # A common pattern when users want to avoid trampling
@@ -183,10 +214,6 @@ container_push(
   registry = "gcr.io",
   repository = "my-project/my-image",
   tag = "{BUILD_USER}",
-  creation_time = "{BUILD_TIMESTAMP}",
-
-  # Trigger stamping.
-  stamp = True,
 )
 ```
 
@@ -275,6 +302,16 @@ container_image(
 )
 ```
 
+Hint: if you want to put files in specific directories inside the image
+use <a href="https://docs.bazel.build/versions/master/be/pkg.html">`pkg_tar` rule</a>
+to create the desired directory structure and pass that to `container_image` via
+`tars` attribute. Note you might need to set `strip_prefix = "."` or `strip_prefix = "{some directory}"`
+in your rule for the files to not be flattened.
+See <a href="https://github.com/bazelbuild/bazel/issues/2176">Bazel upstream issue 2176</a> and
+ <a href="https://github.com/bazelbuild/rules_docker/issues/317">rules_docker issue 317</a>
+for more details.
+
+
 ### cc_image
 
 To use `cc_image`, add the following to `WORKSPACE`:
@@ -320,6 +357,11 @@ cc_image(
 )
 ```
 
+If you need to modify somehow the container produced by
+`cc_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example below.
+
 ### py_image
 
 To use `py_image`, add the following to `WORKSPACE`:
@@ -345,6 +387,11 @@ py_image(
     main = "py_image.py",
 )
 ```
+
+If you need to modify somehow the container produced by
+`py_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example below.
 
 ### py_image (fine layering)
 
@@ -418,6 +465,11 @@ py_image(
 To use a Python 3 runtime instead of the default of Python 2, use `py3_image`,
 instead of `py_image`.  The other semantics are identical.
 
+If you need to modify somehow the container produced by
+`py3_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example below.
+
 ### nodejs_image
 
 **It is notable that unlike the other image rules, `nodejs_image` is not
@@ -459,6 +511,10 @@ load(
 _nodejs_image_repos()
 ```
 
+Note: See note about diamond dependencies in <a href=#setup>setup</a>
+if you run into issues related to external repos after adding these
+lines to your `WORKSPACE`.
+
 Then in your `BUILD` file, simply rewrite `nodejs_binary` to `nodejs_image` with
 the following import:
 ```python
@@ -473,6 +529,11 @@ nodejs_image(
     ...
 )
 ```
+
+If you need to modify somehow the container produced by
+`nodejs_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example below.
 
 ### go_image
 
@@ -499,6 +560,10 @@ load(
 _go_image_repos()
 ```
 
+Note: See note about diamond dependencies in <a href=#setup>setup</a>
+if you run into issues related to external repos after adding these
+lines to your `WORKSPACE`.
+
 Then in your `BUILD` file, simply rewrite `go_binary` to `go_image` with the
 following import:
 ```python
@@ -513,8 +578,14 @@ go_image(
     pure = "on",
 )
 ```
+
 Notice that it is important to explicitly specify `goarch`, `goos`, and `pure`
 as the binary should be built for Linux since it will run on a Linux container.
+
+If you need to modify somehow the container produced by
+`go_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this and
+see example below.
 
 ### go_image (custom base)
 
@@ -600,6 +671,11 @@ java_image(
 )
 ```
 
+If you need to modify somehow the container produced by
+`java_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example.
+
 ### war_image
 
 To use `war_image`, add the following to `WORKSPACE`:
@@ -612,6 +688,10 @@ load(
 
 _java_image_repos()
 ```
+
+Note: See note about diamond dependencies in <a href=#setup>setup</a>
+if you run into issues related to external repos after adding these
+lines to your `WORKSPACE`.
 
 Then in your `BUILD` file, simply rewrite `java_war` to `war_image` with the
 following import:
@@ -628,6 +708,11 @@ war_image(
     ],
 )
 ```
+
+If you need to modify somehow the container produced by
+`war_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example.
 
 ### scala_image
 
@@ -658,6 +743,10 @@ load(
 _scala_image_repos()
 ```
 
+Note: See note about diamond dependencies in <a href=#setup>setup</a>
+if you run into issues related to external repos after adding these
+lines to your `WORKSPACE`.
+
 Then in your `BUILD` file, simply rewrite `scala_binary` to `scala_image` with the
 following import:
 ```python
@@ -669,6 +758,11 @@ scala_image(
     main_class = "examples.images.Binary",
 )
 ```
+
+If you need to modify somehow the container produced by
+`scala_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example.
 
 ### groovy_image
 
@@ -699,6 +793,10 @@ load(
 _groovy_image_repos()
 ```
 
+Note: See note about diamond dependencies in <a href=#setup>setup</a>
+if you run into issues related to external repos after adding these
+lines to your `WORKSPACE`.
+
 Then in your `BUILD` file, simply rewrite `groovy_binary` to `groovy_image` with the
 following import:
 ```python
@@ -710,6 +808,11 @@ groovy_image(
     main_class = "examples.images.Binary",
 )
 ```
+
+If you need to modify somehow the container produced by
+`groovy_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example.
 
 ### rust_image
 
@@ -740,6 +843,10 @@ load(
 _rust_image_repos()
 ```
 
+Note: See note about diamond dependencies in <a href=#setup>setup</a>
+if you run into issues related to external repos after adding these
+lines to your `WORKSPACE`.
+
 Then in your `BUILD` file, simply rewrite `rust_binary` to `rust_image` with the
 following import:
 ```python
@@ -750,6 +857,11 @@ rust_image(
     srcs = ["main.rs"],
 )
 ```
+
+If you need to modify somehow the container produced by
+`rust_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example.
 
 ### d_image
 
@@ -780,6 +892,10 @@ load(
 _d_image_repos()
 ```
 
+Note: See note about diamond dependencies in <a href=#setup>setup</a>
+if you run into issues related to external repos after adding these
+lines to your `WORKSPACE`.
+
 Then in your `BUILD` file, simply rewrite `d_binary` to `d_image` with the
 following import:
 ```python
@@ -790,6 +906,11 @@ d_image(
     srcs = ["main.d"],
 )
 ```
+
+If you need to modify somehow the container produced by
+`d_image` (e.g., `env`, `symlink`), see note above in
+<a href=#overview-1>Language Rules Overview</a> about how to do this
+and see <a href=#go_image-custom-base>go_image (custom base)</a> example.
 
 > NOTE: all application image rules support the `args` string_list
 > attribute.  If specified, they will be appended directly after the
@@ -902,6 +1023,42 @@ container_pull(
 
 This can then be referenced in `BUILD` files as `@gitlab//image`.
 
+### container_pull (Custom client configuration)
+
+If you specified a docker client directory using the "client_config" attribute
+to the docker toolchain configuration described <a href="#setup">here</a>, you
+can use a container_pull that uses the authentication credentials from the
+specified docker client directory as follows:
+
+In `WORKSPACE`:
+
+```python
+load("@io_bazel_rules_docker//toolchains/docker:toolchain.bzl",
+    docker_toolchain_configure="toolchain_configure"
+)
+
+# Configure the docker toolchain.
+docker_toolchain_configure(
+  name = "docker_config",
+  # Path to the directory which has a custom docker client config.json with
+  # authentication credentials for registry.gitlab.com (used in this example).
+  client_config="/path/to/docker/client/config",
+)
+
+# Load the custom version of container_pull created by the docker toolchain
+# configuration.
+load("@docker_config//:pull.bzl", authenticated_container_pull="container_pull")
+
+authenticated_container_pull(
+    name = "gitlab",
+    registry = "registry.gitlab.com",
+    repository = "username/project/image",
+    tag = "tag",
+)
+```
+
+This can then be referenced in `BUILD` files as `@gitlab//image`.
+
 **NOTE:** This will only work on systems with Python >2.7.6
 
 ## Updating the `distroless` base images.
@@ -914,7 +1071,7 @@ update all of the dependencies, please run (from the root of the repository):
 ./update_deps.sh
 ```
 
-Image references should not be update individually because these images have
+Image references should not be updated individually because these images have
 shared layers and letting them diverge could result in sub-optimal push and pull
  performance.
 
@@ -984,6 +1141,82 @@ use with `container_image`'s `base` attribute.
         <p>
           <strong>Note:</strong> For reproducible builds, use of `digest`
           is recommended.
+        </p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>os</code></td>
+      <td>
+        <p><code>string; optional</code></p>
+        <p>When the specified image refers to a multi-platform
+           <a href="https://docs.docker.com/registry/spec/manifest-v2-2/#manifest-list">
+           manifest list</a>, the desired operating system. For example,
+           <code>linux</code> or
+           <code>windows</code>.</p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>os_version</code></td>
+      <td>
+        <p><code>string; optional</code></p>
+        <p>When the specified image refers to a multi-platform
+           <a href="https://docs.docker.com/registry/spec/manifest-v2-2/#manifest-list">
+           manifest list</a>, the desired operating system version. For example,
+           <code>10.0.10586</code>.</p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>os_features</code></td>
+      <td>
+        <p><code>string list; optional</code></p>
+        <p>When the specified image refers to a multi-platform
+           <a href="https://docs.docker.com/registry/spec/manifest-v2-2/#manifest-list">
+           manifest list</a>, the desired operating system features. For example,
+           on Windows this might be <code>["win32k"]</code>.</p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>architecture</code></td>
+      <td>
+        <p><code>string; optional</code></p>
+        <p>When the specified image refers to a multi-platform
+           <a href="https://docs.docker.com/registry/spec/manifest-v2-2/#manifest-list">
+           manifest list</a>, the desired CPU architecture. For example,
+           <code>amd64</code> or <code>arm</code>.</p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>cpu_variant</code></td>
+      <td>
+        <p><code>string; optional</code></p>
+        <p>When the specified image refers to a multi-platform
+           <a href="https://docs.docker.com/registry/spec/manifest-v2-2/#manifest-list">
+           manifest list</a>, the desired CPU variant. For example, for ARM you
+           may need to use <code>v6</code> or <code>v7</code>.</p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>platform_features</code></td>
+      <td>
+        <p><code>string list; optional</code></p>
+        <p>When the specified image refers to a multi-platform
+           <a href="https://docs.docker.com/registry/spec/manifest-v2-2/#manifest-list">
+           manifest list</a>, the desired features. For example, this may
+           include CPU features such as <code>["sse4", "aes"]</code>.</p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>docker_client_config</code></td>
+      <td>
+        <p><code>string; optional</code></p>
+        <p>Specifies the directory to look for the docker client configuration. Don't use this directly.
+           Specify the docker configuration directory using a custom docker toolchain configuration. Look
+           for the <code>client_config</code> attribute in <code>docker_toolchain_configure</code> <a href="#setup">here</a> for
+           details. See <a href="#container_pull-custom-client-configuration">here</a> for an example on
+           how to use <code>container_pull</code> after configuring the docker toolchain</p>
+        <p>When left unspecified (ie not set explicitly or set by the docker toolchain), docker will use
+        the directory specified via the DOCKER_CONFIG environment variable. If DOCKER_CONFIG isn't set,
+        docker falls back to $HOME/.docker.
         </p>
       </td>
     </tr>
@@ -1392,9 +1625,12 @@ container_image(name, base, data_path, directory, files, legacy_repository_namin
       <td><code>debs</code></td>
       <td>
         <code>List of files, optional</code>
-        <p>Debian package to install.</p>
+        <p>Debian packages to extract.</p>
         <p>
-          A list of debian packages that will be installed in the Docker image.
+          Deprecated: A list of debian packages that will be extracted in the Docker image.
+          Note that this doesn't actually install the packages. Installation needs apt
+          or apt-get which need to be executed within a running container which
+          <code>container_image</code> can't do.
         </p>
       </td>
     </tr>
@@ -1559,6 +1795,25 @@ container_image(name, base, data_path, directory, files, legacy_repository_namin
         in tags.</p>
         <p>These fields are specified in attributes using using Python format
         syntax, e.g. <code>foo{BUILD_USER}bar</code>.</p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>launcher</code></td>
+      <td>
+        <p><code>Label; optional</code></p>
+        <p>If present, prefix the image's ENTRYPOINT with this file.
+        Note that the launcher should be a container-compatible (OS & Arch)
+        single executable file without any runtime dependencies (as none
+        of its runfiles will be included in the image).
+        </p>
+      </td>
+    </tr>
+    <tr>
+      <td><code>launcher_args</code></td>
+      <td>
+        <p><code>String list; optional</code></p>
+        <p>Optional arguments for the <code>launcher</code> attribute.
+        Only valid when <code>launcher</code> is specified.</p>
       </td>
     </tr>
   </tbody>
